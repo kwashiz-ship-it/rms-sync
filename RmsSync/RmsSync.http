@@ -1,0 +1,6 @@
+@RmsSync_HostAddress = http://localhost:5089
+
+GET {{RmsSync_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
