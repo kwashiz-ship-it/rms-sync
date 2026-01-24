@@ -1,4 +1,5 @@
 using Google.Cloud.SecretManager.V1;
+using Microsoft.AspNetCore.Diagnostics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,12 +13,15 @@ var app = builder.Build();
 app.Use(async (ctx, next) =>
 {
     var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("REQ");
+
     logger.LogInformation("IN {Method} {Path}{Query} trace={Trace}",
         ctx.Request.Method,
         ctx.Request.Path,
         ctx.Request.QueryString,
         ctx.Request.Headers["x-cloud-trace-context"].ToString());
+
     await next();
+
     logger.LogInformation("OUT {StatusCode} {Method} {Path} trace={Trace}",
         ctx.Response.StatusCode,
         ctx.Request.Method,
@@ -31,7 +35,7 @@ app.UseExceptionHandler(errorApp =>
     errorApp.Run(async context =>
     {
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("EX");
-        var feature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+        var feature = context.Features.Get<IExceptionHandlerFeature>();
         var ex = feature?.Error;
 
         logger.LogError(ex, "UNHANDLED trace={Trace}",
@@ -48,7 +52,7 @@ app.UseExceptionHandler(errorApp =>
             exceptionType = ex?.GetType().FullName ?? "unknown"
         });
     });
-})
+}); // ←★ ここが必須（あなたのコードはこれが無くてCS1002）
 
 // 既存の疎通用エンドポイント（残す）
 var summaries = new[]
@@ -72,10 +76,14 @@ app.MapGet("/weatherforecast", () =>
 .WithName("GetWeatherForecast");
 
 // ✅ 新規：RMSのテスト用（いまは Secret が取れるかだけ確認する）
-// ※ ここで “RMSを叩かない” のがポイント。まず Cloud Build を確実に通す。
+// ※ ここで “RMSを叩かない” のがポイント。まず Secret疎通を確実にする。
 app.MapGet("/rms/items/sample", async (string? tenant, int? limit) =>
 {
-    tenant = string.IsNullOrWhiteSpace(tenant) ? "rinkan" : tenant.Trim();
+    // tenant は許可リスト（将来マルチテナント化しても安全）
+    tenant = string.IsNullOrWhiteSpace(tenant) ? "rinkan" : tenant.Trim().ToLowerInvariant();
+    if (tenant != "rinkan")
+        return Results.BadRequest(new { ok = false, message = "invalid tenant" });
+
     var hits = Math.Clamp(limit ?? 20, 1, 20);
 
     // Cloud Run では通常 GOOGLE_CLOUD_PROJECT が入る（入らない場合は環境変数で追加が必要）
@@ -86,26 +94,30 @@ app.MapGet("/rms/items/sample", async (string? tenant, int? limit) =>
 
     var sm = await SecretManagerServiceClient.CreateAsync();
 
-    async Task<string> GetSecretAsync(string secretId)
+    static async Task<string> GetSecretAsync(SecretManagerServiceClient smClient, string projectId, string secretId)
     {
         // Secret の latest を参照
         var name = new SecretVersionName(projectId, secretId, "latest");
-        var res = await sm.AccessSecretVersionAsync(name);
+        var res = await smClient.AccessSecretVersionAsync(name);
         return res.Payload.Data.ToStringUtf8();
     }
 
     // Secret を取得（値そのものは返さない・ログにも出さない）
-    var serviceSecret = await GetSecretAsync($"rms-{tenant}-serviceSecret");
-    var licenseKey = await GetSecretAsync($"rms-{tenant}-licenseKey");
+    var serviceSecretId = $"rms-{tenant}-serviceSecret";
+    var licenseKeyId = $"rms-{tenant}-licenseKey";
+
+    var serviceSecret = await GetSecretAsync(sm, projectId, serviceSecretId);
+    var licenseKey = await GetSecretAsync(sm, projectId, licenseKeyId);
 
     // 返すのは “取れたかどうか” と “長さ” だけ（漏洩防止）
     return Results.Ok(new
     {
+        ok = true,
         tenant,
         hits,
         secretOk = true,
-        serviceSecretLength = serviceSecret.Length,
-        licenseKeyLength = licenseKey.Length
+        serviceSecretLength = serviceSecret?.Length ?? 0,
+        licenseKeyLength = licenseKey?.Length ?? 0
     });
 });
 
