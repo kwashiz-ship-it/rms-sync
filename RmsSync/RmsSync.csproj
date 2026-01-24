@@ -11,5 +11,4 @@
     <PackageReference Include="Google.Api.Gax.Grpc.GrpcNetClient" Version="3.7.0" />
   </ItemGroup>
 
-
 </Project>
