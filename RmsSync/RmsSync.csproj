@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <PackageReference Include="Google.Cloud.SecretManager.V1" />
-    <PackageReference Include="Rakuten.RMS.Api" />
   </ItemGroup>
 
 </Project>
