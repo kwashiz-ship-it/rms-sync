@@ -1,14 +1,14 @@
 using Google.Cloud.SecretManager.V1;
-using Rakuten.RMS.Api;
-using Rakuten.RMS.Api.ItemAPI20;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Cloud Run は PORT 環境変数で待受ポートが渡される
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 var app = builder.Build();
 
+// 既存の疎通用エンドポイント（残す）
 var summaries = new[]
 {
     "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
@@ -24,15 +24,19 @@ app.MapGet("/weatherforecast", () =>
             summaries[Random.Shared.Next(summaries.Length)]
         ))
         .ToArray();
+
     return forecast;
 })
 .WithName("GetWeatherForecast");
 
-app.MapGet("/rms/items/sample", async (string? tenant = "rinkan", int? limit = 20) =>
+// ✅ 新規：RMSのテスト用（いまは Secret が取れるかだけ確認する）
+// ※ ここで “RMSを叩かない” のがポイント。まず Cloud Build を確実に通す。
+app.MapGet("/rms/items/sample", async (string? tenant, int? limit) =>
 {
     tenant = string.IsNullOrWhiteSpace(tenant) ? "rinkan" : tenant.Trim();
     var hits = Math.Clamp(limit ?? 20, 1, 20);
 
+    // Cloud Run では通常 GOOGLE_CLOUD_PROJECT が入る（入らない場合は環境変数で追加が必要）
     var projectId =
         Environment.GetEnvironmentVariable("GOOGLE_CLOUD_PROJECT")
         ?? Environment.GetEnvironmentVariable("GCP_PROJECT")
@@ -42,42 +46,24 @@ app.MapGet("/rms/items/sample", async (string? tenant = "rinkan", int? limit = 2
 
     async Task<string> GetSecretAsync(string secretId)
     {
+        // Secret の latest を参照
         var name = new SecretVersionName(projectId, secretId, "latest");
         var res = await sm.AccessSecretVersionAsync(name);
         return res.Payload.Data.ToStringUtf8();
     }
 
+    // Secret を取得（値そのものは返さない・ログにも出さない）
     var serviceSecret = await GetSecretAsync($"rms-{tenant}-serviceSecret");
     var licenseKey = await GetSecretAsync($"rms-{tenant}-licenseKey");
 
-    var provider = new ServiceProvider(serviceSecret, licenseKey);
-    var api = provider.GetItemAPI20();
-
-    var condition = new SearchCondition
-    {
-        hits = hits,
-        offset = 1,
-        isInventoryIncluded = true
-    };
-
-    var result = api.Search(condition);
-
-    var items = (result?.results ?? new List<Item>())
-        .Select(x => new
-        {
-            manageNumber = x.manageNumber,
-            itemNumber = x.itemNumber,
-            title = x.title
-        })
-        .ToList();
-
+    // 返すのは “取れたかどうか” と “長さ” だけ（漏洩防止）
     return Results.Ok(new
     {
         tenant,
         hits,
-        numFound = result?.numFound ?? 0,
-        returned = items.Count,
-        items
+        secretOk = true,
+        serviceSecretLength = serviceSecret.Length,
+        licenseKeyLength = licenseKey.Length
     });
 });
 
