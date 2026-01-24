@@ -92,7 +92,7 @@ app.MapGet("/rms/items/sample", async (string? tenant, int? limit) =>
         ?? Environment.GetEnvironmentVariable("GCP_PROJECT")
         ?? throw new InvalidOperationException("ProjectId が見つかりません。GOOGLE_CLOUD_PROJECT を確認してください。");
 
-    var sm = await SecretManagerServiceClient.CreateAsync();
+    var sm = SecretManagerServiceClient.Create();
 
     static async Task<string> GetSecretAsync(SecretManagerServiceClient smClient, string projectId, string secretId)
     {
