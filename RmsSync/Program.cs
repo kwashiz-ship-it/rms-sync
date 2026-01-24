@@ -8,6 +8,48 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 var app = builder.Build();
 
+// ★ 入口ログ（リクエストが来たら必ず出る）
+app.Use(async (ctx, next) =>
+{
+    var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("REQ");
+    logger.LogInformation("IN {Method} {Path}{Query} trace={Trace}",
+        ctx.Request.Method,
+        ctx.Request.Path,
+        ctx.Request.QueryString,
+        ctx.Request.Headers["x-cloud-trace-context"].ToString());
+    await next();
+    logger.LogInformation("OUT {StatusCode} {Method} {Path} trace={Trace}",
+        ctx.Response.StatusCode,
+        ctx.Request.Method,
+        ctx.Request.Path,
+        ctx.Request.Headers["x-cloud-trace-context"].ToString());
+});
+
+// ★ グローバル例外（ここに来たら必ずログ＋JSON返却）
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("EX");
+        var feature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+        var ex = feature?.Error;
+
+        logger.LogError(ex, "UNHANDLED trace={Trace}",
+            context.Request.Headers["x-cloud-trace-context"].ToString());
+
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = 500;
+
+        await context.Response.WriteAsJsonAsync(new
+        {
+            ok = false,
+            traceId = context.Request.Headers["x-cloud-trace-context"].ToString(),
+            message = ex?.Message ?? "unknown",
+            exceptionType = ex?.GetType().FullName ?? "unknown"
+        });
+    });
+})
+
 // 既存の疎通用エンドポイント（残す）
 var summaries = new[]
 {
