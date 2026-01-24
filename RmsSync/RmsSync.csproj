@@ -6,4 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Google.Cloud.SecretManager.V1" Version="3.7.0" />
+    <PackageReference Include="Rakuten.RMS.Api" Version="x.y.z" />
+  </ItemGroup>
+
 </Project>
